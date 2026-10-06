@@ -43,7 +43,18 @@ def clu(
     candidates: list,
     delta: float,
     lazy_dist_matrix,
+    kdtree=None,
+    coords=None,
 ):
+    """Greedy proximity grouping (Algorithm 2).
+
+    With ``kdtree``/``coords`` provided, the density counts and the group scans
+    are restricted to Euclidean delta-balls, which are supersets of the
+    network-distance balls because network distance lower-bounds Euclidean
+    distance; every ball member is still verified against the network
+    distance, so the resulting groups are identical to the unpruned scan
+    while the cost drops to O(|P|(log|P|+nu)) distance evaluations.
+    """
     n_candidates = len(candidates)
     visited = set()
     final_cluster = []
@@ -56,13 +67,15 @@ def clu(
             D_internal[j, i] = lazy_dist_matrix[j, i]
         return D_internal[i, j]
 
+    def ball(i, radius):
+        if kdtree is None:
+            return [j for j in range(n_candidates) if j != i]
+        return sorted(j for j in kdtree.query_ball_point(coords[i], radius) if j != i)
+
     densities = np.zeros(n_candidates)
     for i in range(n_candidates):
-        for j in range(n_candidates):
-            if i == j:
-                continue
-            dist = get_distance(i, j)
-            if dist < delta / 2:
+        for j in ball(i, delta / 2):
+            if get_distance(i, j) < delta / 2:
                 densities[i] += 1
 
     sorted_indices = np.argsort(-densities)
@@ -74,7 +87,7 @@ def clu(
         current_cluster = [idx]
         visited.add(idx)
 
-        for j in range(n_candidates):
+        for j in ball(idx, delta):
             if j in visited:
                 continue
 
@@ -107,7 +120,12 @@ def compress(
 
     n = len(candidate_coords)
 
-    final_clusters = clu(new_pos, candidates, delta, D)
+    try:
+        from scipy.spatial import cKDTree
+        _tree = cKDTree(np.asarray(candidate_coords, dtype=float))
+    except Exception:
+        _tree = None
+    final_clusters = clu(new_pos, candidates, delta, D, kdtree=_tree, coords=np.asarray(candidate_coords, dtype=float) if _tree is not None else None)
 
     cluster_id_of_cidx = {}
     rep_cidx_of_cluster = {}
